@@ -1,5 +1,5 @@
 # app.py — Git-backed Software Catalog
-# Top stays visible (Search + Free/Paid + Suggestions + Details). Grid below scrolls in an Expander.
+# Top stays visible (Search + Free/Paid + List + Details). Grid below scrolls in an Expander.
 
 import io
 import re
@@ -37,8 +37,8 @@ st.markdown(
         border-top: 1px solid #eaeef2;
       }
 
-      /* Suggestion selectbox tighter spacing */
-      .sc-suggest label {display:none;}
+      /* Compact label for list select */
+      .sc-list label {font-weight:600; font-size:.85rem; color:#57606a;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -97,21 +97,6 @@ def badge(text: str, color: str = "gray"):
 
 def pretty_kv(label: str, value):
     st.markdown("**{k}:** {v}".format(k=label, v=(value if pd.notna(value) else "-")))
-
-
-def get_suggestions(df: pd.DataFrame, query: str, license_filter: str, max_items: int = 12) -> List[str]:
-    """Return up to max_items software names that start with query; if fewer, fill with contains matches."""
-    work = df.copy()
-    if "License" in work.columns and license_filter in ("Free", "Paid"):
-        work = work[work["License"].astype(str).str.lower() == license_filter.lower()]
-    names = (
-        work["Software"].dropna().astype(str).map(str.strip)
-        .replace("", pd.NA).dropna().drop_duplicates().tolist()
-    )
-    q = query.lower()
-    starts = [n for n in names if n.lower().startswith(q)] if q else []
-    contains = [n for n in names if q in n.lower() and n not in starts] if q else []
-    return (starts + contains)[:max_items]
 
 # -----------------------------
 # Data loading from Git (secrets)
@@ -235,11 +220,13 @@ if "license_filter" not in st.session_state:
     st.session_state.license_filter = "All"
 
 # -----------------------------
-# TOP TOOLBAR: Search + Free/Paid + Suggestions + Details
+# TOP TOOLBAR: Text Search + Free/Paid + **List** + Details
 # -----------------------------
 left, right = st.columns([1, 1], gap="large")
 with left:
     st.subheader("Search")
+
+    # Text search input
     query = st.text_input(
         "Find software (searches 'Software' column)",
         placeholder="Type to search… e.g., a, vpn, editor",
@@ -247,7 +234,7 @@ with left:
         key="query_box",
     ).strip()
 
-    # Quick filter buttons
+    # License quick filters
     bcol1, bcol2, bcol3 = st.columns([1,1,1])
     with bcol1:
         if st.button("All", type="secondary", use_container_width=True):
@@ -259,35 +246,48 @@ with left:
         if st.button("Paid", type="secondary", use_container_width=True):
             st.session_state.license_filter = "Paid"
 
-    # Suggestions under the search box
-    if query:
-        suggestions = get_suggestions(df, query, st.session_state.license_filter, max_items=12)
-        if suggestions:
-            opts = ["— Suggestions —"] + suggestions
-            with st.container():
-                st.markdown('<div class="sc-suggest">', unsafe_allow_html=True)
-                choice = st.selectbox("Suggestions", options=opts, index=0, label_visibility="collapsed", key="suggest_box")
-                st.markdown('</div>', unsafe_allow_html=True)
-            if choice != opts[0]:
-                st.session_state.selected_software = choice
-                # Optionally align query to choice for consistency
-                st.session_state.query_box = choice
-                safe_rerun()
+    # Build list for selectbox (filtered by license first)
+    list_df = df.copy()
+    lic = st.session_state.license_filter
+    if "License" in list_df.columns and lic in ("Free", "Paid"):
+        list_df = list_df[list_df["License"].astype(str).str.lower() == lic.lower()]
+    names = (
+        list_df["Software"].dropna().astype(str).map(str.strip)
+        .replace("", pd.NA).dropna().drop_duplicates().sort_values(kind="mergesort").tolist()
+    )
 
-# Build filtered DF (based on current query + license filter)
+    # Add searchable list (selectbox has built-in typeahead)
+    st.markdown('<div class="sc-list">', unsafe_allow_html=True)
+    select_placeholder = "Pick from list (type to filter)…"
+    selection = st.selectbox(
+        "Pick from list",
+        options=["—"] + names,
+        index=0,
+        key="search_select",
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # If a name is selected from list, sync with details & (optionally) query
+    if selection != "—":
+        st.session_state.selected_software = selection
+        if not query or query.lower() not in selection.lower():
+            st.session_state.query_box = selection  # keep grid in sync with chosen item
+        safe_rerun()
+
+# Build filtered DF based on query + license
+lic = st.session_state.license_filter
 if query:
     mask = df["Software"].astype(str).str.contains(re.escape(query), case=False, na=False)
     filtered = df[mask].copy()
 else:
     filtered = df.copy()
 
-lic = st.session_state.license_filter
 if "License" in df.columns and lic in ("Free", "Paid"):
     filtered = filtered[filtered["License"].astype(str).str.lower() == lic.lower()]
 
 filtered = filtered.sort_values(by="Software", kind="mergesort")
 
-# Auto-select when there is exactly one match
+# Auto-select when exactly one match
 if not st.session_state.selected_software and len(filtered["Software"].unique()) == 1:
     st.session_state.selected_software = filtered["Software"].iloc[0]
 
@@ -331,7 +331,7 @@ with right:
         else:
             st.info("No details found for the selected software.")
     else:
-        st.caption("Select a card below or use the suggestions/filters to see details here.")
+        st.caption("Select a card below or use the list/filters to see details here.")
 
 # -----------------------------
 # GRID: inside a styled Expander (scrolls), top stays visible
