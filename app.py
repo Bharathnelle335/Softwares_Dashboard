@@ -1,4 +1,4 @@
-# app.py
+# app.py (Git-backed, with safe_rerun)
 import io
 import re
 import base64
@@ -9,7 +9,7 @@ import streamlit as st
 
 try:
     import requests
-except Exception as e:  # pragma: no cover
+except Exception:
     requests = None
 
 # ---------------------------
@@ -18,6 +18,23 @@ except Exception as e:  # pragma: no cover
 st.set_page_config(page_title="Software Catalog", page_icon="🧩", layout="wide")
 st.title("🧩 Software Catalog")
 st.caption("Loads Excel from Git on startup. Browse all software as cards, search, and view full details with a download button.")
+
+# ---------------------------
+# Rerun helper (works across Streamlit versions)
+# ---------------------------
+
+def safe_rerun(scope: str = "app"):
+    """Call st.rerun if available; fall back to st.experimental_rerun for old versions."""
+    try:
+        # Streamlit >= 1.27
+        st.rerun(scope=scope)
+    except Exception:
+        # Older Streamlit (<1.27) fallback
+        try:
+            st.experimental_rerun()
+        except Exception:
+            # As a last resort, do nothing
+            pass
 
 # ---------------------------
 # Helpers
@@ -113,10 +130,8 @@ DATA_SOURCE = None
 err_msg = None
 
 try:
-    # Preferred: explicit public RAW URL in secrets
     if "DATA_URL" in st.secrets:
         DATA_SOURCE = ("url", st.secrets["DATA_URL"], st.secrets.get("GITHUB_TOKEN"))
-    # Or GitHub API parameters for private repos
     elif all(k in st.secrets for k in ["GITHUB_OWNER", "GITHUB_REPO", "GITHUB_PATH"]):
         DATA_SOURCE = (
             "github_api",
@@ -143,7 +158,7 @@ with st.sidebar:
     refresh = st.button("🔄 Refresh data", use_container_width=True)
     if refresh:
         st.cache_data.clear()
-        st.experimental_rerun()
+        safe_rerun()
 
     st.divider()
     st.markdown("**Configured Source**")
