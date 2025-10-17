@@ -1,5 +1,6 @@
 # app.py — Git-backed Software Catalog
-# Top stays visible (Search + Free/Paid + List + Details). Grid below scrolls in an Expander.
+# Search bar is a single selectbox (type-to-filter suggestions). No separate list box.
+# Top area (Search + Free/Paid + Details) stays visible; only the grid scrolls (inside a styled Expander).
 
 import io
 import re
@@ -17,7 +18,7 @@ except Exception:
 st.set_page_config(page_title="Software Catalog", page_icon="🧩", layout="wide", initial_sidebar_state="collapsed")
 
 # -----------------------------
-# CSS — compact cards + scrollable grid area only
+# CSS — compact cards + make only the grid region scroll
 # -----------------------------
 st.markdown(
     """
@@ -29,7 +30,7 @@ st.markdown(
       .sc-card        {padding:.65rem;}
       .stButton>button{padding-top:.35rem;padding-bottom:.35rem;}
 
-      /* Make only the grid region scroll: style the Expander as a scroll container */
+      /* Grid scroll container using Expander (expanded). Hide its header and cap height. */
       div[data-testid="stExpander"] > details > summary {display:none;}
       div[data-testid="stExpander"] {border: none; padding: 0;}
       div[data-testid="stExpander"] > details > div[role="region"] {
@@ -37,8 +38,8 @@ st.markdown(
         border-top: 1px solid #eaeef2;
       }
 
-      /* Compact label for list select */
-      .sc-list label {font-weight:600; font-size:.85rem; color:#57606a;}
+      /* Compact label for the selectbox that works as the search bar */
+      .sc-search label {font-weight:700; font-size:.9rem;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -220,33 +221,13 @@ if "license_filter" not in st.session_state:
     st.session_state.license_filter = "All"
 
 # -----------------------------
-# TOP TOOLBAR: Text Search + Free/Paid + **List** + Details
+# TOP BAR: Selectbox AS search bar + Free/Paid + Details
 # -----------------------------
 left, right = st.columns([1, 1], gap="large")
 with left:
     st.subheader("Search")
 
-    # Text search input
-    query = st.text_input(
-        "Find software (searches 'Software' column)",
-        placeholder="Type to search… e.g., a, vpn, editor",
-        label_visibility="collapsed",
-        key="query_box",
-    ).strip()
-
-    # License quick filters
-    bcol1, bcol2, bcol3 = st.columns([1,1,1])
-    with bcol1:
-        if st.button("All", type="secondary", use_container_width=True):
-            st.session_state.license_filter = "All"
-    with bcol2:
-        if st.button("Free", type="secondary", use_container_width=True):
-            st.session_state.license_filter = "Free"
-    with bcol3:
-        if st.button("Paid", type="secondary", use_container_width=True):
-            st.session_state.license_filter = "Paid"
-
-    # Build list for selectbox (filtered by license first)
+    # Build the options for the selectbox (license-filtered first)
     list_df = df.copy()
     lic = st.session_state.license_filter
     if "License" in list_df.columns and lic in ("Free", "Paid"):
@@ -256,40 +237,42 @@ with left:
         .replace("", pd.NA).dropna().drop_duplicates().sort_values(kind="mergesort").tolist()
     )
 
-    # Add searchable list (selectbox has built-in typeahead)
-    st.markdown('<div class="sc-list">', unsafe_allow_html=True)
-    select_placeholder = "Pick from list (type to filter)…"
-    selection = st.selectbox(
-        "Pick from list",
+    # The selectbox acts as the search bar (type to filter suggestions in-place)
+    st.markdown('<div class="sc-search">', unsafe_allow_html=True)
+    choice = st.selectbox(
+        "Search or pick a software (type to filter)…",
         options=["—"] + names,
         index=0,
-        key="search_select",
+        key="search_bar",
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # If a name is selected from list, sync with details & (optionally) query
-    if selection != "—":
-        st.session_state.selected_software = selection
-        if not query or query.lower() not in selection.lower():
-            st.session_state.query_box = selection  # keep grid in sync with chosen item
-        safe_rerun()
+    # License quick filters
+    bcol1, bcol2, bcol3 = st.columns([1,1,1])
+    with bcol1:
+        if st.button("All", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "All"
+            safe_rerun()
+    with bcol2:
+        if st.button("Free", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "Free"
+            safe_rerun()
+    with bcol3:
+        if st.button("Paid", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "Paid"
+            safe_rerun()
 
-# Build filtered DF based on query + license
-lic = st.session_state.license_filter
-if query:
-    mask = df["Software"].astype(str).str.contains(re.escape(query), case=False, na=False)
-    filtered = df[mask].copy()
+    # When a software is chosen, set selection
+    if choice != "—":
+        st.session_state.selected_software = choice
+
+# The grid will be filtered by selection if one is chosen; otherwise show license-filtered all
+if st.session_state.selected_software:
+    filtered = df[df["Software"].astype(str).str.lower() == st.session_state.selected_software.lower()].copy()
 else:
-    filtered = df.copy()
-
-if "License" in df.columns and lic in ("Free", "Paid"):
-    filtered = filtered[filtered["License"].astype(str).str.lower() == lic.lower()]
+    filtered = list_df.copy()  # license-filtered set
 
 filtered = filtered.sort_values(by="Software", kind="mergesort")
-
-# Auto-select when exactly one match
-if not st.session_state.selected_software and len(filtered["Software"].unique()) == 1:
-    st.session_state.selected_software = filtered["Software"].iloc[0]
 
 with right:
     st.subheader("Details")
@@ -331,7 +314,7 @@ with right:
         else:
             st.info("No details found for the selected software.")
     else:
-        st.caption("Select a card below or use the list/filters to see details here.")
+        st.caption("Pick a software from the search bar to see details here.")
 
 # -----------------------------
 # GRID: inside a styled Expander (scrolls), top stays visible
