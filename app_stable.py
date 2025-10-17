@@ -1,14 +1,11 @@
-# app_searchbar_selectbox.py
-# Streamlit app – Software Catalog wired to Excel with "OSS Top 100" column layout
-# - Top 30% sticky area: left (search + category chips), right (result tab)
-# - Scrollable grid below
-# - Windows/macOS download buttons per software (mac optional)
-# - No Free/Paid filters; search placeholder "Search for software"
+# app.py — Git-backed Software Catalog
+# Search bar is a single selectbox (type-to-filter suggestions). No separate list box.
+# Top area (Search + Free/Paid + Details) stays visible; only the grid scrolls (inside a styled Expander).
 
 import io
 import re
 import base64
-from typing import Optional, Dict, List
+from typing import List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -18,82 +15,40 @@ try:
 except Exception:
     requests = None
 
-st.set_page_config(
-    page_title="Software Catalog",
-    page_icon="🧭",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title="Software Catalog", page_icon="🧩", layout="wide", initial_sidebar_state="collapsed")
 
-# ---------------------- CSS / Layout (top sticky 30%) ----------------------
+# -----------------------------
+# CSS — compact cards + make only the grid region scroll
+# -----------------------------
 st.markdown(
     """
     <style>
-      /* 30% / 70% layout: keep the header area stuck, body area scrolls */
-      .topbar-sticky {
-        position: sticky;
-        top: 0;
-        z-index: 1000;
-        background: var(--background-color, #fff);
-        padding-top: .25rem;
-        padding-bottom: .5rem;
-        border-bottom: 1px solid rgba(0,0,0,.06);
-      }
-      /* Reserve ~30vh for the top (visual guidance) */
-      .topbar-sticky .height-guard {
-        min-height: 30vh;  /* acts like desired 30% area */
+      .sc-small-title {font-size:.95rem;font-weight:700;line-height:1.15;margin:0 0 .2rem 0;}
+      .sc-meta        {color:#57606a;font-size:.80rem;margin-bottom:.35rem;}
+      .sc-desc        {font-size:.85rem;color:#24292f;}
+      .sc-emoji       {font-size:.95rem;vertical-align:-2px;margin-right:6px;}
+      .sc-card        {padding:.65rem;}
+      .stButton>button{padding-top:.35rem;padding-bottom:.35rem;}
+
+      /* Grid scroll container using Expander (expanded). Hide its header and cap height. */
+      div[data-testid="stExpander"] > details > summary {display:none;}
+      div[data-testid="stExpander"] {border: none; padding: 0;}
+      div[data-testid="stExpander"] > details > div[role="region"] {
+        max-height: 70vh; overflow-y: auto; padding-top: .25rem; padding-bottom: .5rem;
+        border-top: 1px solid #eaeef2;
       }
 
-      /* Below grid wrapper should scroll within remaining viewport */
-      .grid-wrapper {
-        height: calc(100vh - 30vh - 1rem);
-        overflow: auto;
-        padding-top: .25rem;
-      }
-
-      /* Make input placeholder look softer ("blurred") */
-      input::placeholder {
-        color: #98A2B3 !important;
-        opacity: 1 !important;
-      }
-
-      /* Category "chips" look */
-      .chip-row { margin-top: .25rem; }
-      .chip {
-        display: inline-block;
-        background: #F2F4F7;
-        border: 1px solid #E4E7EC;
-        color: #344054;
-        border-radius: 16px;
-        padding: 6px 12px;
-        margin: 2px 6px 0 0;
-        font-size: 0.85rem;
-        cursor: pointer;
-        user-select: none;
-      }
-      .chip.active {
-        background: #EEF4FF;
-        border-color: #4C6FFF;
-        color: #3538CD;
-        font-weight: 600;
-      }
-
-      /* Compact badges */
-      .tag {
-        display:inline-block;
-        padding:2px 8px; font-size:12px; border-radius:10px;
-        background: #EDF2FF; color:#3538CD; border:1px solid #D1DBFF;
-      }
-      .license-tag { background:#FFF1E7; border-color:#FFD6BA; color:#B54708; }
-
-      /* Give Streamlit containers a bit tighter spacing for cards */
-      div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stContainer"]) { margin-bottom:.5rem; }
+      /* Compact label for the selectbox that works as the search bar */
+      .sc-search label {font-weight:700; font-size:.9rem;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------------------- Utilities ----------------------
+# -----------------------------
+# Rerun helper
+# -----------------------------
+
 def safe_rerun(scope: str = "app"):
     try:
         st.rerun(scope=scope)
@@ -103,82 +58,50 @@ def safe_rerun(scope: str = "app"):
         except Exception:
             pass
 
+# -----------------------------
+# Helpers
+# -----------------------------
+
 def normalize_col(name: str) -> str:
-    return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+    return re.sub(r"\s+", " ", str(name).strip().lower())
 
-def find_version_column(cols: List[str]) -> Optional[str]:
-    # Find "Latest Version (as of 2025-..)" style header
-    for c in cols:
-        if normalize_col(c).startswith("latest version (as of"):
-            return c
-    # fallback common names
-    for cand in ["version", "latest version", "current version"]:
-        for c in cols:
-            if normalize_col(c) == cand:
-                return c
-    return None
-
-def coerce_to_oss_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Map your Excel columns to unified app schema."""
-    df = df.copy()
-    # Normalize column names a bit
-    original = list(df.columns)
-    cols_norm_map: Dict[str, str] = {normalize_col(c): c for c in original}
-
-    # Software
-    if "software name" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["software name"]: "Software"})
-    elif "software" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["software"]: "Software"})
-    else:
-        # Try a few alternatives
-        for key in ["name", "product", "application", "app name", "component"]:
-            if key in cols_norm_map:
-                df = df.rename(columns={cols_norm_map[key]: "Software"})
-                break
-
-    # Version (detect dynamic header)
-    ver_col = find_version_column(list(df.columns))
-    if ver_col:
-        df = df.rename(columns={ver_col: "Version"})
-
-    # Category, License
-    if "category" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["category"]: "Category"})
-    if "license" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["license"]: "License"})
-
-    # Platform-specific download URLs
-    if "windows download url" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["windows download url"]: "WindowsURL"})
-    if "macos download url" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["macos download url"]: "MacURL"})
-    if "linux download url" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["linux download url"]: "LinuxURL"})
-
-    # Description
-    if "notes" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["notes"]: "Description"})
-    elif "description" in cols_norm_map:
-        df = df.rename(columns={cols_norm_map["description"]: "Description"})
-
+def coerce_to_software_column(df: pd.DataFrame) -> pd.DataFrame:
+    norm_map = {normalize_col(c): c for c in df.columns}
+    if "software" in norm_map:
+        orig = norm_map["software"]
+        if orig != "Software":
+            df = df.rename(columns={orig: "Software"})
+        return df
+    if "component" in norm_map:
+        return df.rename(columns={norm_map["component"]: "Software"})
+    for key in ["name", "item", "asset", "module", "service", "application", "app name", "product"]:
+        if key in norm_map:
+            return df.rename(columns={norm_map[key]: "Software"})
     return df
 
-def badge_html(text: str, cls: str = "tag"):
-    return f'<span class="{cls}">{text}</span>'
 
-def link_button(label: str, url: str, key: str, fill=True):
-    """Try Streamlit's link_button, fallback to markdown link."""
-    url_s = (url or "").strip()
-    if not url_s or not url_s.lower().startswith(("http://", "https://")):
-        return False
-    try:
-        st.link_button(label, url_s, use_container_width=fill, key=key)
-    except Exception:
-        st.markdown(f"[{label}]({url_s})", unsafe_allow_html=True)
-    return True
+def badge(text: str, color: str = "gray"):
+    colors = {
+        "green": "#2da44e", "red": "#d1242f", "blue": "#0969da", "gray": "#6e7781",
+        "orange": "#c9510c", "violet": "#8250df", "pink": "#bf3989"
+    }
+    hexcolor = colors.get(color, color)
+    bg = hexcolor + "20"
+    bd = hexcolor + "40"
+    html = (
+        "<span style='display:inline-block;padding:2px 8px;border-radius:999px;"
+        "font-size:12px;font-weight:600;background:{bg};color:{fg};"
+        "border:1px solid {bd}'>{text}</span>"
+    ).format(bg=bg, fg=hexcolor, bd=bd, text=text)
+    st.markdown(html, unsafe_allow_html=True)
 
-# ---------------------- Data loading (from secrets) ----------------------
+
+def pretty_kv(label: str, value):
+    st.markdown("**{k}:** {v}".format(k=label, v=(value if pd.notna(value) else "-")))
+
+# -----------------------------
+# Data loading from Git (secrets)
+# -----------------------------
 @st.cache_data(ttl=300, show_spinner=True)
 def load_excel_from_public_url(url: str, headers: Optional[dict] = None) -> pd.DataFrame:
     if requests is None:
@@ -191,11 +114,11 @@ def load_excel_from_public_url(url: str, headers: Optional[dict] = None) -> pd.D
 def load_excel_from_github_api(owner: str, repo: str, path: str, ref: Optional[str] = None, token: Optional[str] = None) -> pd.DataFrame:
     if requests is None:
         raise RuntimeError("The 'requests' package is required. Add it to requirements.txt.")
-    api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+    api_url = "https://api.github.com/repos/{owner}/{repo}/contents/{path}".format(owner=owner, repo=repo, path=path)
     params = {"ref": ref} if ref else None
     headers = {"Accept": "application/vnd.github.v3+json"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        headers["Authorization"] = "Bearer {t}".format(t=token)
     resp = requests.get(api_url, headers=headers, params=params, timeout=30)
     resp.raise_for_status()
     data = resp.json()
@@ -204,6 +127,7 @@ def load_excel_from_github_api(owner: str, repo: str, path: str, ref: Optional[s
         return pd.read_excel(io.BytesIO(b), dtype=object)
     raise RuntimeError("Unexpected GitHub API response. Ensure the path points to a file.")
 
+# Determine data source from secrets
 DATA_SOURCE = None
 err_msg = None
 try:
@@ -224,180 +148,184 @@ try:
     else:
         err_msg = "No Git data source configured in secrets. Set DATA_URL or GITHUB_* entries."
 except Exception as e:
-    err_msg = f"Error reading Streamlit secrets: {e}"
+    err_msg = "Error reading Streamlit secrets: {e}".format(e=e)
 
+# -----------------------------
+# Sidebar
+# -----------------------------
 with st.sidebar:
     st.header("⚙️ Settings")
-    st.caption("Data loads from Git (secrets). Use Refresh to clear cache.")
+    st.caption("Data is loaded from Git (secrets). Use Refresh to re-fetch and clear cache.")
     if st.button("🔄 Refresh data", use_container_width=True):
         st.cache_data.clear()
         safe_rerun()
+
     st.divider()
     st.markdown("**Configured Source**")
     if DATA_SOURCE is None:
         st.error(err_msg or "No data source configured.")
     else:
         if DATA_SOURCE[0] == "url":
-            st.code(f"URL: {DATA_SOURCE[1]}")
+            st.code("URL: {u}".format(u=DATA_SOURCE[1]))
         else:
             cfg = DATA_SOURCE[1]
-            st.code(f"GitHub API: {cfg['owner']}/{cfg['repo']}/{cfg['path']} @ {cfg.get('ref') or 'default'}")
+            st.code("GitHub API: {o}/{r}/{p} @ {ref}".format(
+                o=cfg["owner"], r=cfg["repo"], p=cfg["path"], ref=(cfg.get("ref") or "default")
+            ))
 
-# ---------------------- Load and normalize data ----------------------
-if DATA_SOURCE is None:
-    st.error(err_msg or "No data source configured.")
-    st.stop()
+# -----------------------------
+# Load data
+# -----------------------------
+df = None
+load_error = None
 
-try:
-    if DATA_SOURCE[0] == "url":
-        url = DATA_SOURCE[1]
-        token = DATA_SOURCE[2]
-        headers = {"Authorization": f"Bearer {token}"} if token else None
-        df_raw = load_excel_from_public_url(url, headers=headers)
-    else:
-        cfg = DATA_SOURCE[1]
-        df_raw = load_excel_from_github_api(
-            owner=cfg["owner"], repo=cfg["repo"], path=cfg["path"],
-            ref=cfg.get("ref"), token=cfg.get("token")
-        )
-except Exception as e:
-    st.error(f"Failed to load Excel from Git: {e}")
-    st.stop()
-
-df_raw.columns = [str(c).strip() for c in df_raw.columns]
-df = coerce_to_oss_columns(df_raw)
-
-if "Software" not in df.columns:
-    st.error("Could not find 'Software Name' / 'Software' column in the Excel.")
-    st.stop()
-
-# Make sure expected columns exist (even if empty)
-for needed in ["Version", "Category", "License", "WindowsURL", "MacURL", "LinuxURL", "Description"]:
-    if needed not in df.columns:
-        df[needed] = None
-
-# Ensure object dtype
-for c in df.columns:
-    df[c] = df[c].astype(object)
-
-# Session state
-ss = st.session_state
-if "selected_software" not in ss:
-    ss.selected_software = None
-if "selected_category" not in ss:
-    ss.selected_category = "All"
-if "search_text" not in ss:
-    ss.search_text = ""
-
-# ---------------------- TOP (sticky ~30%): Left (search+categories), Right (result tab) ----------------------
-# Wrap in sticky top bar with 2 columns
-st.markdown('<div class="topbar-sticky">', unsafe_allow_html=True)
-with st.container():
-    c_left, c_right = st.columns([1, 1], gap="large")
-
-    with c_left:
-        # SEARCH
-        st.subheader("Search")
-        ss.search_text = st.text_input(
-            label="",
-            value=ss.search_text,
-            placeholder="Search for software",
-            label_visibility="collapsed",
-            key="search_input",
-        )
-
-        # CATEGORY CHIPS
-        st.markdown('<div class="chip-row">', unsafe_allow_html=True)
-        categories = ["All"] + sorted(
-            list(pd.Series(df["Category"].dropna().astype(str).str.strip().unique()).sort_values())
-        )
-        chip_cols = st.columns(6)
-        for i, cat in enumerate(categories):
-            col = chip_cols[i % 6]
-            with col:
-                pressed = st.button(
-                    cat,
-                    key=f"chip_{cat}",
-                    use_container_width=True,
-                    type="secondary" if ss.selected_category != cat else "primary",
-                )
-                if pressed:
-                    ss.selected_category = cat
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c_right:
-        st.subheader("Result")
-        if ss.selected_software:
-            sel_mask = df["Software"].astype(str).str.lower() == str(ss.selected_software).lower()
-            detail_df = df[sel_mask].head(1)
-            if not detail_df.empty:
-                rec = detail_df.iloc[0].to_dict()
-                # Header
-                st.markdown(f"### {rec.get('Software', '-')}")
-                top_meta = []
-                ver = str(rec.get("Version") or "").strip()
-                lic = str(rec.get("License") or "").strip()
-                if ver:
-                    top_meta.append(badge_html(f"Version: {ver}", "tag"))
-                if lic:
-                    top_meta.append(badge_html(lic, "license-tag"))
-                if top_meta:
-                    st.markdown(" ".join(top_meta), unsafe_allow_html=True)
-
-                # Description
-                desc = str(rec.get("Description") or "").strip()
-                if desc:
-                    st.caption(desc)
-
-                # Download buttons (Windows / macOS)
-                w = (rec.get("WindowsURL") or "").strip()
-                m = (rec.get("MacURL") or "").strip()
-                b1, b2 = st.columns(2)
-                with b1:
-                    if not link_button("⬇️ Windows", w, key="d_win_detail"):
-                        st.write(" ")
-                with b2:
-                    if m:
-                        link_button("⬇️ macOS", m, key="d_mac_detail")
-                    else:
-                        st.write(" ")
-            else:
-                st.info("Select any software from the grid to see details here.")
+if DATA_SOURCE is not None:
+    try:
+        if DATA_SOURCE[0] == "url":
+            url = DATA_SOURCE[1]
+            token = DATA_SOURCE[2]
+            headers = {"Authorization": "Bearer {t}".format(t=token)} if token else None
+            df = load_excel_from_public_url(url, headers=headers)
         else:
-            st.caption("Pick a software from the grid to see details here.")
+            cfg = DATA_SOURCE[1]
+            df = load_excel_from_github_api(
+                owner=cfg["owner"],
+                repo=cfg["repo"],
+                path=cfg["path"],
+                ref=cfg.get("ref"),
+                token=cfg.get("token"),
+            )
+    except Exception as e:
+        load_error = str(e)
+else:
+    load_error = err_msg or "No data source configured."
 
-    st.markdown('<div class="height-guard"></div>', unsafe_allow_html=True)
+if load_error:
+    st.error("Failed to load Excel from Git: {e}".format(e=load_error))
+    st.stop()
 
-st.markdown('</div>', unsafe_allow_html=True)  # end sticky topbar
+# Normalize / coerce Software column
+df.columns = [str(c).strip() for c in df.columns]
+df = coerce_to_software_column(df)
+if "Software" not in df.columns:
+    st.error("No identifying column found. Please include a column named 'Software' (or 'Component').")
+    st.stop()
 
-# ---------------------- Filtering logic ----------------------
-filtered = df.copy()
+for col in df.columns:
+    df[col] = df[col].astype(object)
 
-# Category filter
-if ss.selected_category and ss.selected_category != "All":
-    filtered = filtered[
-        filtered["Category"].astype(str).str.strip().str.lower() == ss.selected_category.strip().lower()
-    ]
+# Keep selection state
+if "selected_software" not in st.session_state:
+    st.session_state.selected_software = None
+if "license_filter" not in st.session_state:
+    st.session_state.license_filter = "All"
 
-# Text search
-q = (ss.search_text or "").strip().lower()
-if q:
-    filtered = filtered[
-        filtered["Software"].astype(str).str.lower().str.contains(re.escape(q))
-    ]
+# -----------------------------
+# TOP BAR: Selectbox AS search bar + Free/Paid + Details
+# -----------------------------
+left, right = st.columns([1, 1], gap="large")
+with left:
+    st.subheader("Search")
+
+    # Build the options for the selectbox (license-filtered first)
+    list_df = df.copy()
+    lic = st.session_state.license_filter
+    if "License" in list_df.columns and lic in ("Free", "Paid"):
+        list_df = list_df[list_df["License"].astype(str).str.lower() == lic.lower()]
+    names = (
+        list_df["Software"].dropna().astype(str).map(str.strip)
+        .replace("", pd.NA).dropna().drop_duplicates().sort_values(kind="mergesort").tolist()
+    )
+
+    # The selectbox acts as the search bar (type to filter suggestions in-place)
+    st.markdown('<div class="sc-search">', unsafe_allow_html=True)
+    choice = st.selectbox(
+        "Search or pick a software (type to filter)…",
+        options=["—"] + names,
+        index=0,
+        key="search_bar",
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # License quick filters
+    bcol1, bcol2, bcol3 = st.columns([1,1,1])
+    with bcol1:
+        if st.button("All", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "All"
+            safe_rerun()
+    with bcol2:
+        if st.button("Free", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "Free"
+            safe_rerun()
+    with bcol3:
+        if st.button("Paid", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "Paid"
+            safe_rerun()
+
+    # When a software is chosen, set selection
+    if choice != "—":
+        st.session_state.selected_software = choice
+
+# The grid will be filtered by selection if one is chosen; otherwise show license-filtered all
+if st.session_state.selected_software:
+    filtered = df[df["Software"].astype(str).str.lower() == st.session_state.selected_software.lower()].copy()
+else:
+    filtered = list_df.copy()  # license-filtered set
 
 filtered = filtered.sort_values(by="Software", kind="mergesort")
 
-# ---------------------- GRID (scrollable area) ----------------------
-with st.container():
-    st.markdown('<div class="grid-wrapper">', unsafe_allow_html=True)
+with right:
+    st.subheader("Details")
+    selected = st.session_state.selected_software
+    if selected:
+        match_mask = df["Software"].astype(str).str.lower() == str(selected).lower()
+        detail_df = df[match_mask].copy()
+        if not detail_df.empty:
+            base = detail_df.iloc[0].to_dict()
+            c1, c2 = st.columns(2)
+            with c1:
+                pretty_kv("Software", base.get("Software"))
+                pretty_kv("Version", base.get("Version"))
+                pretty_kv("License", base.get("License"))
+                pretty_kv("Category", base.get("Category"))
+                pretty_kv("Vendor", base.get("Vendor"))
+            with c2:
+                pretty_kv("Platform", base.get("Platform"))
+                pretty_kv("Last Updated", base.get("Last Updated"))
+                pretty_kv("Download URL", base.get("Download URL"))
+                url = str(base.get("Download URL") or "").strip()
+                if url.lower().startswith(("http://", "https://")):
+                    try:
+                        st.link_button("⬇️ Download", url, use_container_width=True)
+                    except Exception:
+                        st.markdown(
+                            '<a href="{u}" target="_blank" style="text-decoration:none;'
+                            'background:#0969da;color:#fff;padding:.45rem .65rem;'
+                            'border-radius:8px;display:inline-block;text-align:center;'
+                            'font-weight:600;">⬇️ Download</a>'.format(u=url),
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.warning("No valid Download URL found.")
+            desc = base.get("Description") or ""
+            if str(desc).strip():
+                st.markdown("**Description**")
+                st.info(str(desc))
+        else:
+            st.info("No details found for the selected software.")
+    else:
+        st.caption("Pick a software from the search bar to see details here.")
 
-    st.caption(f"Showing {len(filtered)} of {len(df)} software")
+# -----------------------------
+# GRID: inside a styled Expander (scrolls), top stays visible
+# -----------------------------
+with st.expander("", expanded=True):
+    st.caption("Showing {shown} of {total} software".format(shown=len(filtered), total=len(df)))
 
-    n_cols = 4
+    n_cols = 5
     rows = list(filtered.iterrows())
     for i in range(0, len(rows), n_cols):
-        chunk = rows[i:i + n_cols]
+        chunk = rows[i:i+n_cols]
         cols = st.columns(len(chunk), gap="small")
         for col_idx, (idx, row) in enumerate(chunk):
             with cols[col_idx]:
@@ -406,45 +334,42 @@ with st.container():
                 except TypeError:
                     cont = st.container()
                 with cont:
+                    st.markdown("<div class='sc-card'>", unsafe_allow_html=True)
                     title = str(row.get("Software", "—"))
-                    version_val = str(row.get("Version", "") or "")
-                    license_val = str(row.get("License", "") or "")
-                    category = str(row.get("Category", "") or "")
+                    license_val = str(row.get("License", "—"))
+                    version_val = str(row.get("Version", "—"))
+                    category = str(row.get("Category", "—"))
+                    platform = str(row.get("Platform", "—"))
                     desc = str(row.get("Description", "") or "")
-
-                    st.markdown(f"**{title}**")
-                    meta_badges = []
-                    if category:
-                        meta_badges.append(badge_html(category, "tag"))
-                    if version_val:
-                        meta_badges.append(badge_html(f"Version: {version_val}", "tag"))
-                    if license_val:
-                        meta_badges.append(badge_html(license_val, "license-tag"))
-                    if meta_badges:
-                        st.markdown(" ".join(meta_badges), unsafe_allow_html=True)
-
-                    if desc:
-                        st.caption(desc if len(desc) <= 110 else (desc[:110] + "…"))
-
-                    # Download buttons
-                    wurl = str(row.get("WindowsURL") or "").strip()
-                    murl = str(row.get("MacURL") or "").strip()
-                    d1, d2 = st.columns(2)
-                    with d1:
-                        link_button("⬇️ Windows", wurl, key=f"card_win_{idx}")
-                    with d2:
-                        if murl:
-                            link_button("⬇️ macOS", murl, key=f"card_mac_{idx}")
-                        else:
-                            st.write(" ")
-
-                    # Details button
-                    if st.button("Details", key=f"view_{idx}", use_container_width=True):
+                    st.markdown(
+                        "<div class='sc-small-title'><span class='sc-emoji'>🧩</span>{t}</div>".format(t=title),
+                        unsafe_allow_html=True,
+                    )
+                    meta = " • ".join([x for x in [category, platform] if x and x != "—"])
+                    if meta:
+                        st.markdown("<div class='sc-meta'>{m}</div>".format(m=meta), unsafe_allow_html=True)
+                    b1, b2 = st.columns([1, 1])
+                    with b1:
+                        badge("Version: {v}".format(v=version_val), color="blue")
+                    with b2:
+                        badge(license_val, color=("green" if license_val.lower() == "free" else "orange"))
+                    if desc.strip():
+                        st.markdown(
+                            "<div class='sc-desc'>{text}</div>".format(
+                                text=(desc if len(desc) < 100 else (desc[:100] + "…"))
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    if st.button("Details", key="view_{i}".format(i=idx), use_container_width=True):
                         st.session_state.selected_software = title
                         safe_rerun()
-
-    st.markdown('</div>', unsafe_allow_html=True)  # end grid-wrapper
+                    st.markdown("</div>", unsafe_allow_html=True)
 
 # Footer
 st.divider()
-st.caption(f"Rows: {len(df)}")
+meta1, meta2 = st.columns(2)
+with meta1:
+    st.caption("**Rows:** {n}".format(n=len(df)))
+with meta2:
+    if DATA_SOURCE is not None:
+        st.caption("**Source:** URL" if DATA_SOURCE[0] == "url" else "**Source:** GitHub API")
