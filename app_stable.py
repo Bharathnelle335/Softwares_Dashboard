@@ -23,23 +23,30 @@ st.set_page_config(
 )
 
 # ----------------------------------
-# CSS — compact cards + sticky toolbar
+# CSS — compact cards + sticky toolbar (comment kept INSIDE the string)
 # ----------------------------------
 st.markdown(
-    (
-        "<style>"
-        ".sc-small-title{font-size:.95rem;font-weight:700;line-height:1.15;margin:0 0 .2rem 0;}"
-        ".sc-meta{color:#57606a;font-size:.80rem;margin-bottom:.35rem;}"
-        ".sc-desc{font-size:.85rem;color:#24292f;}"
-        ".sc-emoji{font-size:.95rem;vertical-align:-2px;margin-right:6px;}"
-        ".sc-card{padding:.65rem;}"
-        ".stButton>button{padding-top:.35rem;padding-bottom:.35rem;}"
-        /* Sticky toolbar: stays at top while scrolling */
-        ".sc-toolbar{position:sticky;top:0;z-index:1000;background:#ffffff;"
-        "border-bottom:1px solid #eaeef2;padding:.5rem 0 .75rem 0;"
-        "backdrop-filter:blur(6px);}"
-        "</style>"
-    ),
+    """
+    <style>
+      .sc-small-title {font-size: .95rem; font-weight: 700; line-height: 1.15; margin: 0 0 .2rem 0;}
+      .sc-meta        {color:#57606a; font-size: .80rem; margin-bottom: .35rem;}
+      .sc-desc        {font-size: .85rem; color:#24292f;}
+      .sc-emoji       {font-size: .95rem; vertical-align: -2px; margin-right: 6px;}
+      .sc-card        {padding: .65rem;}
+      .stButton>button{padding-top: .35rem; padding-bottom: .35rem;}
+
+      /* Sticky toolbar: stays at the top while scrolling */
+      .sc-toolbar{
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        background: #ffffff;
+        border-bottom: 1px solid #eaeef2;
+        padding: .5rem 0 .75rem 0;
+        backdrop-filter: blur(6px);
+      }
+    </style>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -49,10 +56,10 @@ st.markdown(
 
 def safe_rerun(scope: str = "app"):
     try:
-        st.rerun(scope=scope)
+        st.rerun(scope=scope)  # Streamlit >= 1.27
     except Exception:
         try:
-            st.experimental_rerun()
+            st.experimental_rerun()  # legacy fallback
         except Exception:
             pass
 
@@ -221,8 +228,8 @@ if "selected_software" not in st.session_state:
 # ----------------------------------
 st.markdown("<div class='sc-toolbar'>", unsafe_allow_html=True)
 
-tleft, tright = st.columns([3, 2], gap="large")
-with tleft:
+left, right = st.columns([3, 2], gap="large")
+with left:
     st.subheader("Search")
     query = st.text_input(
         "Find software (searches 'Software' column)",
@@ -243,7 +250,7 @@ filtered = filtered.sort_values(by="Software", kind="mergesort")
 if not st.session_state.selected_software and query and len(filtered["Software"].unique()) == 1:
     st.session_state.selected_software = filtered["Software"].iloc[0]
 
-with tright:
+with right:
     st.subheader("Details")
     selected = st.session_state.selected_software
     if selected:
