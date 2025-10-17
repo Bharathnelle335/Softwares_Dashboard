@@ -1,4 +1,5 @@
-# app.py — Git-backed Software Catalog (sticky top bar, 5-card grid, compact cards)
+# app.py — Git-backed Software Catalog
+# Sticky top 30% (Search + Details), equal panes, non-scrollable; 5-card grid; Free/Paid filter buttons
 import io
 import re
 import base64
@@ -12,9 +13,9 @@ try:
 except Exception:
     requests = None
 
-# ----------------------------------
+# -----------------------------
 # Page config (sidebar collapsed)
-# ----------------------------------
+# -----------------------------
 st.set_page_config(
     page_title="Software Catalog",
     page_icon="🧩",
@@ -22,50 +23,53 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ----------------------------------
-# CSS — compact cards + sticky toolbar (comment kept INSIDE the string)
-# ----------------------------------
+# -----------------------------
+# CSS — compact cards + sticky panes occupying top 30% of viewport
+# -----------------------------
 st.markdown(
     """
     <style>
-      .sc-small-title {font-size: .95rem; font-weight: 700; line-height: 1.15; margin: 0 0 .2rem 0;}
-      .sc-meta        {color:#57606a; font-size: .80rem; margin-bottom: .35rem;}
-      .sc-desc        {font-size: .85rem; color:#24292f;}
-      .sc-emoji       {font-size: .95rem; vertical-align: -2px; margin-right: 6px;}
-      .sc-card        {padding: .65rem;}
-      .stButton>button{padding-top: .35rem; padding-bottom: .35rem;}
+      /* Typography & card compaction */
+      .sc-small-title {font-size:.95rem;font-weight:700;line-height:1.15;margin:0 0 .2rem 0;}
+      .sc-meta        {color:#57606a;font-size:.80rem;margin-bottom:.35rem;}
+      .sc-desc        {font-size:.85rem;color:#24292f;}
+      .sc-emoji       {font-size:.95rem;vertical-align:-2px;margin-right:6px;}
+      .sc-card        {padding:.65rem;}
+      .stButton>button{padding-top:.35rem;padding-bottom:.35rem;}
 
-      /* Sticky toolbar: stays at the top while scrolling */
+      /* Sticky toolbar wrapping both panes */
       .sc-toolbar{
-        position: sticky;
-        top: 0;
-        z-index: 1000;
-        background: #ffffff;
-        border-bottom: 1px solid #eaeef2;
-        padding: .5rem 0 .75rem 0;
-        backdrop-filter: blur(6px);
+        position: sticky; top: 0; z-index: 1000; background: #ffffff;
+        border-bottom: 1px solid #eaeef2; padding: .5rem 0 .75rem 0;
+        height: 30vh; /* occupy top 30% */
       }
+      /* Pane bodies should not scroll; keep equal height */
+      .sc-pane{ height: calc(30vh - 1.25rem); overflow: hidden; }
+      /* Give search input some spacing when label is collapsed */
+      .sc-input-space{ margin-top: .25rem; }
+      /* Keep grid close to toolbar */
+      .sc-grid-pad{ margin-top: .5rem; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ----------------------------------
+# -----------------------------
 # Rerun helper (new + legacy)
-# ----------------------------------
+# -----------------------------
 
 def safe_rerun(scope: str = "app"):
     try:
-        st.rerun(scope=scope)  # Streamlit >= 1.27
+        st.rerun(scope=scope)
     except Exception:
         try:
-            st.experimental_rerun()  # legacy fallback
+            st.experimental_rerun()
         except Exception:
             pass
 
-# ----------------------------------
+# -----------------------------
 # Helpers
-# ----------------------------------
+# -----------------------------
 
 def normalize_col(name: str) -> str:
     return re.sub(r"\s+", " ", str(name).strip().lower())
@@ -104,9 +108,9 @@ def badge(text: str, color: str = "gray"):
 def pretty_kv(label: str, value):
     st.markdown("**{k}:** {v}".format(k=label, v=(value if pd.notna(value) else "-")))
 
-# ----------------------------------
+# -----------------------------
 # Data loading from Git (secrets)
-# ----------------------------------
+# -----------------------------
 @st.cache_data(ttl=300, show_spinner=True)
 def load_excel_from_public_url(url: str, headers: Optional[dict] = None) -> pd.DataFrame:
     if requests is None:
@@ -155,9 +159,9 @@ try:
 except Exception as e:
     err_msg = "Error reading Streamlit secrets: {e}".format(e=e)
 
-# ----------------------------------
+# -----------------------------
 # Sidebar (collapsed initially)
-# ----------------------------------
+# -----------------------------
 with st.sidebar:
     st.header("⚙️ Settings")
     st.caption("Data is loaded from Git (secrets). Use Refresh to re-fetch and clear cache.")
@@ -178,9 +182,9 @@ with st.sidebar:
                 o=cfg["owner"], r=cfg["repo"], p=cfg["path"], ref=(cfg.get("ref") or "default")
             ))
 
-# ----------------------------------
+# -----------------------------
 # Load data
-# ----------------------------------
+# -----------------------------
 df = None
 load_error = None
 
@@ -223,12 +227,12 @@ for col in df.columns:
 if "selected_software" not in st.session_state:
     st.session_state.selected_software = None
 
-# ----------------------------------
-# STICKY TOP TOOLBAR: Search (left) + Details (right)
-# ----------------------------------
+# -----------------------------
+# STICKY TOP 30%: Search (left) + Details (right); equal width; non-scrollable panes
+# -----------------------------
 st.markdown("<div class='sc-toolbar'>", unsafe_allow_html=True)
 
-left, right = st.columns([3, 2], gap="large")
+left, right = st.columns([1, 1], gap="large")
 with left:
     st.subheader("Search")
     query = st.text_input(
@@ -237,21 +241,48 @@ with left:
         label_visibility="collapsed",
     ).strip()
 
-# Apply search
+    # License quick filters (buttons)
+    if "license_filter" not in st.session_state:
+        st.session_state.license_filter = "All"
+
+    bcol1, bcol2, bcol3 = st.columns([1,1,1])
+    with bcol1:
+        if st.button("All", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "All"
+    with bcol2:
+        if st.button("Free", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "Free"
+    with bcol3:
+        if st.button("Paid", type="secondary", use_container_width=True):
+            st.session_state.license_filter = "Paid"
+
+    # Pane height lock (non-scroll)
+    st.markdown("<div class='sc-pane sc-left'>", unsafe_allow_html=True)
+    # (Nothing else to show inside left pane body; inputs are above)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# Apply search + license filters
 if query:
     mask = df["Software"].astype(str).str.contains(re.escape(query), case=False, na=False)
     filtered = df[mask].copy()
 else:
     filtered = df.copy()
 
+lic = st.session_state.license_filter
+if "License" in df.columns and lic in ("Free", "Paid"):
+    filtered = filtered[filtered["License"].astype(str).str.lower() == lic.lower()]
+
 filtered = filtered.sort_values(by="Software", kind="mergesort")
 
-# Auto-select when search narrows to exactly one
-if not st.session_state.selected_software and query and len(filtered["Software"].unique()) == 1:
+# Auto-select when narrowed to exactly one
+if not st.session_state.selected_software and len(filtered["Software"].unique()) == 1:
     st.session_state.selected_software = filtered["Software"].iloc[0]
 
 with right:
     st.subheader("Details")
+    # Lock the height for right pane too
+    st.markdown("<div class='sc-pane sc-right'>", unsafe_allow_html=True)
+
     selected = st.session_state.selected_software
     if selected:
         match_mask = df["Software"].astype(str).str.lower() == str(selected).lower()
@@ -290,15 +321,18 @@ with right:
         else:
             st.info("No details found for the selected software.")
     else:
-        st.caption("Select a card below or narrow your search to see details here.")
+        st.caption("Select a card below or use the filters to see details here.")
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# Close sticky wrapper
 st.markdown("</div>", unsafe_allow_html=True)
 
-st.divider()
+st.markdown("<div class='sc-grid-pad'></div>", unsafe_allow_html=True)
 
-# ----------------------------------
+# -----------------------------
 # CARD GRID (5 per row, compact)
-# ----------------------------------
+# -----------------------------
 st.caption("Showing {shown} of {total} software".format(shown=len(filtered), total=len(df)))
 
 n_cols = 5
@@ -344,9 +378,9 @@ for i in range(0, len(rows), n_cols):
                     safe_rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
-# ----------------------------------
+# -----------------------------
 # Footer
-# ----------------------------------
+# -----------------------------
 st.divider()
 meta1, meta2 = st.columns(2)
 with meta1:
