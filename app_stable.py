@@ -1,4 +1,4 @@
-# app.py — Git-backed Software Catalog (top toolbar + 5-card grid + smaller icons)
+# app.py — Git-backed Software Catalog (sticky top bar, 5-card grid, compact cards)
 import io
 import re
 import base64
@@ -19,22 +19,28 @@ st.set_page_config(
     page_title="Software Catalog",
     page_icon="🧩",
     layout="wide",
-    initial_sidebar_state="collapsed",   # collapsed by default
+    initial_sidebar_state="collapsed",
 )
 
-# Minimal CSS for compact titles/icons and denser cards
+# ----------------------------------
+# CSS — compact cards + sticky toolbar
+# ----------------------------------
 st.markdown(
-    """
-    <style>
-      .sc-small-title {font-size: 0.95rem; font-weight: 700; line-height: 1.15; margin: 0 0 0.2rem 0;}
-      .sc-meta {color:#57606a; font-size: 0.80rem; margin-bottom: 0.35rem;}
-      .sc-desc {font-size: 0.85rem; color:#24292f;}
-      .sc-emoji {font-size: 0.95rem; vertical-align: -2px; margin-right: 6px;}
-      .sc-card {padding: 0.65rem;}
-      .stButton>button {padding-top: 0.35rem; padding-bottom: 0.35rem;}
-    </style>
-    """,
-    unsafe_allow_html=True
+    (
+        "<style>"
+        ".sc-small-title{font-size:.95rem;font-weight:700;line-height:1.15;margin:0 0 .2rem 0;}"
+        ".sc-meta{color:#57606a;font-size:.80rem;margin-bottom:.35rem;}"
+        ".sc-desc{font-size:.85rem;color:#24292f;}"
+        ".sc-emoji{font-size:.95rem;vertical-align:-2px;margin-right:6px;}"
+        ".sc-card{padding:.65rem;}"
+        ".stButton>button{padding-top:.35rem;padding-bottom:.35rem;}"
+        /* Sticky toolbar: stays at top while scrolling */
+        ".sc-toolbar{position:sticky;top:0;z-index:1000;background:#ffffff;"
+        "border-bottom:1px solid #eaeef2;padding:.5rem 0 .75rem 0;"
+        "backdrop-filter:blur(6px);}"
+        "</style>"
+    ),
+    unsafe_allow_html=True,
 )
 
 # ----------------------------------
@@ -43,10 +49,10 @@ st.markdown(
 
 def safe_rerun(scope: str = "app"):
     try:
-        st.rerun(scope=scope)          # Streamlit >= 1.27
+        st.rerun(scope=scope)
     except Exception:
         try:
-            st.experimental_rerun()    # legacy fallback
+            st.experimental_rerun()
         except Exception:
             pass
 
@@ -211,10 +217,11 @@ if "selected_software" not in st.session_state:
     st.session_state.selected_software = None
 
 # ----------------------------------
-# TOP TOOLBAR (stable): Search (left) + Details (right)
+# STICKY TOP TOOLBAR: Search (left) + Details (right)
 # ----------------------------------
-tleft, tright = st.columns([3, 2], gap="large")
+st.markdown("<div class='sc-toolbar'>", unsafe_allow_html=True)
 
+tleft, tright = st.columns([3, 2], gap="large")
 with tleft:
     st.subheader("Search")
     query = st.text_input(
@@ -236,18 +243,14 @@ filtered = filtered.sort_values(by="Software", kind="mergesort")
 if not st.session_state.selected_software and query and len(filtered["Software"].unique()) == 1:
     st.session_state.selected_software = filtered["Software"].iloc[0]
 
-# DETAILS PANEL on the RIGHT (top)
 with tright:
     st.subheader("Details")
     selected = st.session_state.selected_software
-
     if selected:
         match_mask = df["Software"].astype(str).str.lower() == str(selected).lower()
         detail_df = df[match_mask].copy()
-
         if not detail_df.empty:
             base = detail_df.iloc[0].to_dict()
-
             c1, c2 = st.columns(2)
             with c1:
                 pretty_kv("Software", base.get("Software"))
@@ -266,39 +269,33 @@ with tright:
                     except Exception:
                         st.markdown(
                             '<a href="{u}" target="_blank" style="text-decoration:none;'
-                            'background:#0969da;color:#fff;padding:0.45rem 0.65rem;'
+                            'background:#0969da;color:#fff;padding:.45rem .65rem;'
                             'border-radius:8px;display:inline-block;text-align:center;'
                             'font-weight:600;">⬇️ Download</a>'.format(u=url),
-                            unsafe_allow_html=True
+                            unsafe_allow_html=True,
                         )
                 else:
                     st.warning("No valid Download URL found.")
-
             desc = base.get("Description") or ""
             if str(desc).strip():
                 st.markdown("**Description**")
                 st.info(str(desc))
-
-            if len(detail_df) > 1:
-                st.markdown("**All records for {s}** ({n}):".format(s=selected, n=len(detail_df)))
-                st.dataframe(detail_df, use_container_width=True)
-
-            st.button("Clear selection", on_click=lambda: st.session_state.update({"selected_software": None}))
         else:
             st.info("No details found for the selected software.")
     else:
         st.caption("Select a card below or narrow your search to see details here.")
 
+st.markdown("</div>", unsafe_allow_html=True)
+
 st.divider()
 
 # ----------------------------------
-# CARD GRID (5 items per row, compact titles/icons)
+# CARD GRID (5 per row, compact)
 # ----------------------------------
 st.caption("Showing {shown} of {total} software".format(shown=len(filtered), total=len(df)))
 
-n_cols = 5  # five per row
+n_cols = 5
 rows = list(filtered.iterrows())
-
 for i in range(0, len(rows), n_cols):
     chunk = rows[i:i+n_cols]
     cols = st.columns(len(chunk), gap="small")
@@ -310,41 +307,34 @@ for i in range(0, len(rows), n_cols):
                 cont = st.container()
             with cont:
                 st.markdown("<div class='sc-card'>", unsafe_allow_html=True)
-
                 title = str(row.get("Software", "—"))
                 license_val = str(row.get("License", "—"))
                 version_val = str(row.get("Version", "—"))
                 category = str(row.get("Category", "—"))
                 platform = str(row.get("Platform", "—"))
                 desc = str(row.get("Description", "") or "")
-
                 st.markdown(
                     "<div class='sc-small-title'><span class='sc-emoji'>🧩</span>{t}</div>".format(t=title),
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
-
                 meta = " • ".join([x for x in [category, platform] if x and x != "—"])
                 if meta:
                     st.markdown("<div class='sc-meta'>{m}</div>".format(m=meta), unsafe_allow_html=True)
-
                 b1, b2 = st.columns([1, 1])
                 with b1:
                     badge("Version: {v}".format(v=version_val), color="blue")
                 with b2:
                     badge(license_val, color=("green" if license_val.lower() == "free" else "orange"))
-
                 if desc.strip():
                     st.markdown(
                         "<div class='sc-desc'>{text}</div>".format(
                             text=(desc if len(desc) < 100 else (desc[:100] + "…"))
                         ),
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
-
                 if st.button("Details", key="view_{i}".format(i=idx), use_container_width=True):
                     st.session_state.selected_software = title
                     safe_rerun()
-
                 st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------------
