@@ -1,6 +1,6 @@
 # app.py — Git-backed Software Catalog
-# Search bar is a single selectbox (type-to-filter suggestions). No separate list box.
-# Top area (Search + Details) stays visible; only the grid scrolls (inside a styled Expander).
+# UI: Search (select), Details pane, and a grid of cards. Cards now show bold title with 🪩
+# and "boxed" badges for Category / Version / License for better visibility.
 
 import io
 import re
@@ -18,14 +18,38 @@ st.set_page_config(
     page_title="OpenSource Softwares",
     page_icon="🪩",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 # ----------------------------
-# CSS — compact cards + make only the grid region scroll
+# CSS — card title + boxes/badges styling
 # ----------------------------
 st.markdown(
-    """
+    r"""
+    <style>
+      :root {
+        --fg: #24292f;
+        --muted: #6e7781;
+        --line: #e6e8eb;
+        --chip-bg: #f7f8fa;
+        --chip-bd: #e2e4e8;
+        --chip-fg: #111827;
+        --accent: #0969da;
+      }
+      .card-title { font-weight: 700; font-size: 1.05rem; line-height: 1.25; color: var(--fg); margin: 0 0 .35rem 0; }
+      .card-title .disco { margin-right: .35rem; }
+
+      .box-row { display: flex; flex-wrap: wrap; gap: .4rem; margin: .15rem 0 .4rem 0; }
+      .badge-box { display: inline-flex; align-items: baseline; gap: .4rem; padding: .38rem .6rem; border-radius: 10px; border: 1px solid var(--chip-bd); background: var(--chip-bg); }
+      .badge-label { font-size: .72rem; letter-spacing: .02em; color: var(--muted); text-transform: uppercase; }
+      .badge-value { font-size: .88rem; font-weight: 600; color: var(--chip-fg); }
+
+      .desc { color: var(--fg); font-size: .90rem; }
+      .divider { height: 1px; background: var(--line); margin: .5rem 0; }
+
+      /* Details pane header */
+      .detail-title { font-weight: 800; font-size: 1.15rem; margin: 0 0 .5rem 0; }
+    </style>
     """,
     unsafe_allow_html=True,
 )
@@ -33,6 +57,7 @@ st.markdown(
 # ----------------------------
 # Rerun helper
 # ----------------------------
+
 def safe_rerun(scope: str = "app"):
     try:
         st.rerun(scope=scope)
@@ -45,8 +70,10 @@ def safe_rerun(scope: str = "app"):
 # ----------------------------
 # Helpers
 # ----------------------------
+
 def normalize_col(name: str) -> str:
     return re.sub(r"\s+", " ", str(name).strip().lower())
+
 
 def coerce_to_software_column(df: pd.DataFrame) -> pd.DataFrame:
     norm_map = {normalize_col(c): c for c in df.columns}
@@ -62,20 +89,6 @@ def coerce_to_software_column(df: pd.DataFrame) -> pd.DataFrame:
             return df.rename(columns={norm_map[key]: "Software"})
     return df
 
-def badge(text: str, color: str = "gray"):
-    colors = {
-        "green": "#2da44e",
-        "red": "#d1242f",
-        "blue": "#0969da",
-        "gray": "#6e7781",
-        "orange": "#c9510c",
-        "violet": "#8250df",
-        "pink": "#bf3989"
-    }
-    hexcolor = colors.get(color, color)
-    # Minimal badge rendering (text only for compatibility in Streamlit markdown)
-    html = f"{text}"
-    st.markdown(html, unsafe_allow_html=True)
 
 def pretty_kv(label: str, value):
     st.markdown(f"**{label}:** {value if pd.notna(value) else '-'}")
@@ -83,6 +96,7 @@ def pretty_kv(label: str, value):
 # ----------------------------
 # Data loading from Git (secrets)
 # ----------------------------
+
 @st.cache_data(ttl=300, show_spinner=True)
 def load_excel_from_public_url(url: str, headers: Optional[dict] = None) -> pd.DataFrame:
     if requests is None:
@@ -90,6 +104,7 @@ def load_excel_from_public_url(url: str, headers: Optional[dict] = None) -> pd.D
     r = requests.get(url, headers=headers or {}, timeout=30)
     r.raise_for_status()
     return pd.read_excel(io.BytesIO(r.content), dtype=object)
+
 
 @st.cache_data(ttl=300, show_spinner=True)
 def load_excel_from_github_api(owner: str, repo: str, path: str, ref: Optional[str] = None, token: Optional[str] = None) -> pd.DataFrame:
@@ -134,6 +149,7 @@ except Exception as e:
 # ----------------------------
 # Sidebar
 # ----------------------------
+
 with st.sidebar:
     st.header("⚙️ Settings")
     st.caption("Data is loaded from Git (secrets). Use Refresh to re-fetch and clear cache.")
@@ -154,6 +170,7 @@ with st.sidebar:
 # ----------------------------
 # Load data
 # ----------------------------
+
 df = None
 load_error = None
 if DATA_SOURCE is not None:
@@ -182,6 +199,7 @@ if load_error:
     st.stop()
 
 # Normalize / coerce Software column
+
 df.columns = [str(c).strip() for c in df.columns]
 df = coerce_to_software_column(df)
 if "Software" not in df.columns:
@@ -198,14 +216,15 @@ if "license_filter" not in st.session_state:
     st.session_state.license_filter = "All"
 
 # ----------------------------
-# TOP BAR: Selectbox AS search bar + Details
+# TOP BAR: Selectbox as search bar + Details pane
 # ----------------------------
+
 left, right = st.columns([1, 1], gap="large")
 
 with left:
     st.subheader("OpenSource Softwares")
 
-    # Build the options for the selectbox (license-filtered first)
+    # Options for the selectbox (license-filtered first)
     list_df = df.copy()
     lic = st.session_state.license_filter
     if "License" in list_df.columns and lic in ("Free", "Paid"):
@@ -217,35 +236,30 @@ with left:
         .sort_values(kind="mergesort").tolist()
     )
 
-    # NEW: placeholder is 'select' instead of hyphen/dash
     SELECT_PLACEHOLDER = "select"
-
-    st.markdown('\n', unsafe_allow_html=True)
+    st.markdown("\n", unsafe_allow_html=True)
     choice = st.selectbox(
         "Search or pick an open‑source software (type to filter)…",
         options=[SELECT_PLACEHOLDER] + names,
         index=0,
         key="search_bar",
     )
-    st.markdown('\n', unsafe_allow_html=True)
+    st.markdown("\n", unsafe_allow_html=True)
 
-    # When a software is chosen, set selection
     if choice != SELECT_PLACEHOLDER:
         st.session_state.selected_software = choice
 
-    # Provide a way to go back to the full list after searching/choosing
     if st.session_state.selected_software:
         if st.button("← Show all softwares", type="secondary", use_container_width=True):
             st.session_state.selected_software = None
-            # Safely reset the selectbox by removing its state; it will default to index=0 (select) on rerun
             st.session_state.pop("search_bar", None)
             safe_rerun()
 
-    # The grid will be filtered by selection if one is chosen; otherwise show license-filtered all
+    # Filter for grid
     if st.session_state.selected_software:
         filtered = df[df["Software"].astype(str).str.lower() == st.session_state.selected_software.lower()].copy()
     else:
-        filtered = list_df.copy()  # license-filtered set
+        filtered = list_df.copy()
     filtered = filtered.sort_values(by="Software", kind="mergesort")
 
 with right:
@@ -256,31 +270,37 @@ with right:
         detail_df = df[match_mask].copy()
         if not detail_df.empty:
             base = detail_df.iloc[0].to_dict()
-            c1, c2 = st.columns(2)
-            with c1:
-                pretty_kv("Software", base.get("Software"))
-                pretty_kv("Version", base.get("Version"))
-                pretty_kv("License", base.get("License"))
-                pretty_kv("Category", base.get("Category"))
-                # REMOVED: Vendor
-                # pretty_kv("Vendor", base.get("Vendor"))
-            with c2:
-                # REMOVED: Platform / Last Updated
-                # pretty_kv("Platform", base.get("Platform"))
-                # pretty_kv("Last Updated", base.get("Last Updated"))
-                pretty_kv("Download URL", base.get("Download URL"))
 
+            # Title with 🪩 and bold
+            st.markdown(
+                f"<div class='detail-title'><span class='disco'>🪩</span><strong>{base.get('Software','')}</strong></div>",
+                unsafe_allow_html=True,
+            )
+            # Boxed info row
+            st.markdown(
+                f"""
+                <div class='box-row'>
+                  <div class='badge-box'><span class='badge-label'>Category</span><span class='badge-value'>{base.get('Category','-')}</span></div>
+                  <div class='badge-box'><span class='badge-label'>Version</span><span class='badge-value'>{base.get('Version','-')}</span></div>
+                  <div class='badge-box'><span class='badge-label'>License</span><span class='badge-value'>{base.get('License','-')}</span></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Download
             url = str(base.get("Download URL") or "").strip()
             if url.lower().startswith(("http://", "https://")):
                 try:
                     st.link_button("⬇️ Download", url, use_container_width=True)
                 except Exception:
-                    st.markdown(f'[⬇️ Download]({url})', unsafe_allow_html=True)
+                    st.markdown(f"[⬇️ Download]({url})", unsafe_allow_html=True)
             else:
                 st.warning("No valid Download URL found.")
 
             desc = base.get("Description") or ""
             if str(desc).strip():
+                st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
                 st.markdown("**Description**")
                 st.info(str(desc))
         else:
@@ -289,10 +309,11 @@ with right:
         st.caption("Pick a software from the search bar to see details here.")
 
 # ----------------------------
-# GRID: inside a styled Expander (scrolls), top stays visible
+# GRID of cards (scrolls)
 # ----------------------------
+
 with st.expander("", expanded=True):
-    st.caption("Showing {shown} of {total} software".format(shown=len(filtered), total=len(df)))
+    st.caption(f"Showing {len(filtered)} of {len(df)} software")
     n_cols = 5
     rows_iter = list(filtered.iterrows())
 
@@ -306,46 +327,44 @@ with st.expander("", expanded=True):
                 except TypeError:
                     cont = st.container()
                 with cont:
-                    st.markdown("\n", unsafe_allow_html=True)
-
                     title = str(row.get("Software", "—"))
                     license_val = str(row.get("License", "—"))
                     version_val = str(row.get("Version", "—"))
                     category = str(row.get("Category", "—"))
-                    # REMOVED: Platform variable / usage
-                    # platform = str(row.get("Platform", "—"))
                     desc = str(row.get("Description", "") or "")
 
-                    st.markdown(f"\n🪩{title}\n", unsafe_allow_html=True)
+                    # Title line: 🪩 + bold software name
+                    st.markdown(
+                        f"<div class='card-title'><span class='disco'>🪩</span><strong>{title}</strong></div>",
+                        unsafe_allow_html=True,
+                    )
 
-                    # Meta shows only Category now (Platform removed)
-                    meta = " • ".join([x for x in [category] if x and x != "—"])
-                    if meta:
-                        st.markdown(f"\n{meta}\n", unsafe_allow_html=True)
+                    # Box row with Category / Version / License
+                    st.markdown(
+                        f"""
+                        <div class='box-row'>
+                          <div class='badge-box'><span class='badge-label'>Category</span><span class='badge-value'>{category}</span></div>
+                          <div class='badge-box'><span class='badge-label'>Version</span><span class='badge-value'>{version_val}</span></div>
+                          <div class='badge-box'><span class='badge-label'>License</span><span class='badge-value'>{license_val}</span></div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-                    b1, b2 = st.columns([1, 1])
-                    with b1:
-                        badge(f"Version: {version_val}", color="blue")
-                    with b2:
-                        badge(license_val, color=("green" if license_val.lower() == "free" else "orange"))
-
+                    # Optional short description
                     if desc.strip():
-                        st.markdown(
-                            f"\n{desc if len(desc) < 100 else (desc[:100] + '…')}\n",
-                            unsafe_allow_html=True,
-                        )
+                        short = desc if len(desc) <= 120 else (desc[:120] + "…")
+                        st.markdown(f"<div class='desc'>{short}</div>", unsafe_allow_html=True)
 
                     if st.button("Details", key=f"view_{idx}", use_container_width=True):
                         st.session_state.selected_software = title
                         safe_rerun()
 
-                    st.markdown("\n", unsafe_allow_html=True)
-
     # Footer
     st.divider()
-    meta1, meta2 = st.columns(2)
-    with meta1:
+    c1, c2 = st.columns(2)
+    with c1:
         st.caption(f"**Rows:** {len(df)}")
-    with meta2:
+    with c2:
         if DATA_SOURCE is not None:
             st.caption("**Source:** URL" if DATA_SOURCE[0] == "url" else "**Source:** GitHub API")
