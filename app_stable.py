@@ -254,9 +254,10 @@ with left:
 
     # Provide a way to go back to the full list after searching/choosing
     if st.session_state.selected_software:
-        if st.button("← Show all software", type="secondary", use_container_width=True):
+        if st.button("← Show all softwares", type="secondary", use_container_width=True):
             st.session_state.selected_software = None
-            st.session_state.search_bar = "—"
+            # Safely reset the selectbox by removing its state; it will default to index=0 (—) on rerun
+            st.session_state.pop("search_bar", None)
             safe_rerun()
 
 # The grid will be filtered by selection if one is chosen; otherwise show license-filtered all
