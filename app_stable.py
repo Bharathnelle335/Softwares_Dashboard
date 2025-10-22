@@ -15,7 +15,7 @@ try:
 except Exception:
     requests = None
 
-st.set_page_config(page_title="Software Catalog", page_icon="🧩", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="OpenSource Softwares", page_icon="🧩", layout="wide", initial_sidebar_state="collapsed")
 
 # -----------------------------
 # CSS — compact cards + make only the grid region scroll
@@ -225,7 +225,7 @@ if "license_filter" not in st.session_state:
 # -----------------------------
 left, right = st.columns([1, 1], gap="large")
 with left:
-    st.subheader("Search")
+    st.subheader("OpenSource Softwares")
 
     # Build the options for the selectbox (license-filtered first)
     list_df = df.copy()
@@ -239,32 +239,25 @@ with left:
 
     # The selectbox acts as the search bar (type to filter suggestions in-place)
     st.markdown('<div class="sc-search">', unsafe_allow_html=True)
-    choice = st.selectbox(
-        "Search or pick a software (type to filter)…",
+    choice = st.selectbox("Search or pick an open‑source software (type to filter)…",
         options=["—"] + names,
         index=0,
         key="search_bar",
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # License quick filters
-    bcol1, bcol2, bcol3 = st.columns([1,1,1])
-    with bcol1:
-        if st.button("All", type="secondary", use_container_width=True):
-            st.session_state.license_filter = "All"
-            safe_rerun()
-    with bcol2:
-        if st.button("Free", type="secondary", use_container_width=True):
-            st.session_state.license_filter = "Free"
-            safe_rerun()
-    with bcol3:
-        if st.button("Paid", type="secondary", use_container_width=True):
-            st.session_state.license_filter = "Paid"
-            safe_rerun()
+    
 
     # When a software is chosen, set selection
     if choice != "—":
         st.session_state.selected_software = choice
+
+    # Provide a way to go back to the full list after searching/choosing
+    if st.session_state.selected_software:
+        if st.button("← Show all software", type="secondary", use_container_width=True):
+            st.session_state.selected_software = None
+            st.session_state.search_bar = "—"
+            safe_rerun()
 
 # The grid will be filtered by selection if one is chosen; otherwise show license-filtered all
 if st.session_state.selected_software:
